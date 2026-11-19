@@ -23,7 +23,7 @@ public class GestorPedidosTest {
     private GestorPedidos gestorPedidos;
 
     @Test
-    @DisplayName("Ruta 1: Rechazo por stock insuficiente")
+    @DisplayName("Ruta 1: Rechazo por stock insuficiente (ValidadorStock)")
     void testStockInsuficiente() {
         // Producto 2 tiene stock de 5 unidades. Solicitamos 10.
         PedidoRequest request = new PedidoRequest(1L, "cliente1@mail.com",
@@ -37,7 +37,7 @@ public class GestorPedidosTest {
     }
 
     @Test
-    @DisplayName("Ruta 2: Rechazo por cliente inexistente")
+    @DisplayName("Ruta 2: Rechazo por cliente inexistente (ValidadorCliente)")
     void testClienteInexistente() {
         PedidoRequest request = new PedidoRequest(999L, "desconocido@mail.com",
                 List.of(new ItemPedido(1L, 1)));
@@ -49,7 +49,7 @@ public class GestorPedidosTest {
     }
 
     @Test
-    @DisplayName("Ruta 3: Validación cliente moroso según horario de corte (20:00)")
+    @DisplayName("Ruta 3: Validación cliente moroso según horario de corte 20:00 (ValidadorCliente)")
     void testClienteMoroso() {
         PedidoRequest request = new PedidoRequest(4L, "moroso@mail.com",
                 List.of(new ItemPedido(1L, 1)));
@@ -85,7 +85,7 @@ public class GestorPedidosTest {
     @Test
     @DisplayName("Ruta 5: Descuento FRECUENTE (> 10 pedidos previos -> 8%)")
     void testDescuentoFrecuente() {
-        // Cliente 3 tiene 11 pedidos previos. Descuento = 8%.
+        // Cliente 3 tiene 11 pedidos previos en BD. Descuento = 8%.
         // Producto 1 vale 100_000. Subtotal = 100_000. Descuento = 8% (8_000).
         // Base gravable = 92_000. IVA (19%) = 17_480. Total = 109_480.
         PedidoRequest request = new PedidoRequest(3L, "frecuente@mail.com",
@@ -99,7 +99,56 @@ public class GestorPedidosTest {
     }
 
     @Test
-    @DisplayName("Ruta adicional: Rechazo por pedido sin items")
+    @DisplayName("Campaña 1: Descuento Corporativo (Cliente con NIT -> 10%)")
+    void testCampanaCorporativo() {
+        // Cliente 5 tiene NIT = '900123456-1'. Descuento = 10%.
+        // Producto 1 vale 100_000. Subtotal = 100_000. Descuento = 10% (10_000).
+        // Base gravable = 90_000. IVA (19%) = 17_100. Total = 107_100.
+        PedidoRequest request = new PedidoRequest(5L, "corporativo@empresa.com",
+                List.of(new ItemPedido(1L, 1)));
+
+        ResultadoPedido resultado = gestorPedidos.procesarPedido(request);
+
+        assertTrue(resultado.isConfirmado());
+        assertNotNull(resultado.getPedidoId());
+        assertEquals(107100.0, resultado.getTotal(), 0.01);
+    }
+
+    @Test
+    @DisplayName("Campaña 2: Descuento por Volumen (> 20 unidades -> 12%)")
+    void testCampanaVolumen() {
+        // Cliente 1 estándar (0% base). Pedido con 25 unidades de Producto 4 (250_000 c/u).
+        // Subtotal = 25 * 250_000 = 6_250_000.
+        // Unidades = 25 (> 20) -> Descuento = 12% (750_000).
+        // Base gravable = 5_500_000. IVA (19%) = 1_045_000. Total = 6_545_000.
+        PedidoRequest request = new PedidoRequest(1L, "volumen@mail.com",
+                List.of(new ItemPedido(4L, 25)));
+
+        ResultadoPedido resultado = gestorPedidos.procesarPedido(request);
+
+        assertTrue(resultado.isConfirmado());
+        assertNotNull(resultado.getPedidoId());
+        assertEquals(6545000.0, resultado.getTotal(), 0.01);
+    }
+
+    @Test
+    @DisplayName("Regla de negocio: El mayor descuento gana (VIP 15% vs Volumen 12% -> VIP 15%)")
+    void testMayorDescuentoGana() {
+        // Cliente 2 VIP con subtotal > 1M (15% por tipo cliente).
+        // Pedido con 25 unidades de Producto 1 (100_000 c/u) = Subtotal 2_500_000.
+        // Unidades = 25 -> Campaña volumen da 12%.
+        // Mayor descuento = 15% (375_000). Base = 2_125_000. IVA (19%) = 403_750. Total = 2_528_750.
+        PedidoRequest request = new PedidoRequest(2L, "vip.volumen@mail.com",
+                List.of(new ItemPedido(1L, 25)));
+
+        ResultadoPedido resultado = gestorPedidos.procesarPedido(request);
+
+        assertTrue(resultado.isConfirmado());
+        assertEquals(2528750.0, resultado.getTotal(), 0.01);
+    }
+
+    @Test
+    @DisplayName("Ruta de guardia: Rechazo por pedido sin items")
     void testSinItems() {
         PedidoRequest request = new PedidoRequest(1L, "vacio@mail.com", List.of());
 
