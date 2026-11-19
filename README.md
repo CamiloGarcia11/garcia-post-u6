@@ -2,7 +2,7 @@
 
 ## Descripción
 Repositorio del post-contenido de la Unidad 6 de Patrones de Diseño de Software — Sexto Semestre.
-Un único proyecto Spring Boot (`pedidos-service/`) que aborda el diagnóstico y refactorización de antipatrones de diseño en un sistema de gestión de pedidos de comercio electrónico.
+Un único proyecto Spring Boot (`pedidos-service/`) con dos partes: diagnóstico y refactorización de un antipatrón combinado en `GestorPedidos`, y diagnóstico y corrección de un segundo antipatrón introducido al hacer crecer el mismo proyecto con tres campañas de descuento.
 
 ---
 
@@ -31,9 +31,24 @@ Analizando `GestorPedidos.java`, se identifican las siguientes evidencias técni
 - **Colisión de niveles de abstracción**:
   - En la misma secuencia procedural conviven instrucciones de bajo nivel de acceso a datos (`jdbcTemplate.queryForObject(...)`), lógica de dominio financiero (impuestos y descuentos) y concatenación de mensajes de presentación para el usuario.
 
-- **Violación de principios de diseño**:
-  - **Single Responsibility Principle (SRP)**: La clase tiene al menos 6 razones para cambiar (cambio en inventario, política de morosidad, política de descuentos, esquema de base de datos, motor de notificación o formato del mensaje).
-  - **Open/Closed Principle (OCP)**: Agregar una nueva tipología de cliente o campaña promocional exige modificar directamente el cuerpo del método principal de `GestorPedidos`.
+---
+
+## Diagnóstico de Antipatrones (Parte 2: Crecimiento del Sistema)
+
+### 1. Antipatrón Identificado: Golden Hammer (Martillo de Oro)
+Al incorporar las tres nuevas campañas de descuento (`PromocionBlackFriday`, `PromocionCorporativo`, `PromocionVolumen`), se incurre en el antipatrón **Golden Hammer**.
+Habiendo experimentado el éxito de *Chain of Responsibility* para desacoplar `ValidadorStock` y `ValidadorCliente` en la Parte 1, el desarrollador reutilizó indiscriminadamente este mismo patrón estructural para un problema con características semánticas y operativas totalmente distintas.
+
+### 2. Evidencia Concreta del Código Fuente
+- **Ausencia total de dependencia de orden y de necesidad de corte anticipado**:
+  - A diferencia de `ValidadorStock` y `ValidadorCliente` (donde si el stock no existe, carece de sentido consultar las facturas del cliente), las promociones no guardan relación de precedencia. Ejecutar `PromocionVolumen` antes de `PromocionCorporativo` o `PromocionBlackFriday` produce idéntico resultado.
+- **Ruptura del contrato semántico y de abstracción (`Liskov Substitution Principle`)**:
+  - La clase abstracta `ValidadorPedido` define conceptualmente la responsabilidad de *validar* y potencialmente *rechazar* un pedido (`contexto.rechazar(...)`).
+  - Sin embargo, `PromocionBlackFriday`, `PromocionCorporativo` y `PromocionVolumen` **nunca rechazan un pedido**. Únicamente aprovechan que la infraestructura de la cadena existe para engancharse como parásitos y mutar un estado compartido.
+- **Corrupción del Contexto con Estado Mutable Compartido**:
+  - Se forzó la inserción de un campo mutable adicional en `ContextoPedido` (`descuentoCampana` y `aplicarDescuentoCampana(double)`), generando competencia por efectos secundarios entre eslabones.
+- **Dificultad de composición y evolución de negocio**:
+  - Si el negocio cambia la regla de "el mayor descuento gana" por una de acumulación aditiva, la cadena queda incapacitada para manejarlo limpiamente sin lógica arbitral invasiva.
 
 ---
 
@@ -41,12 +56,17 @@ Analizando `GestorPedidos.java`, se identifican las siguientes evidencias técni
 
 ### Parte 1 — GestorPedidos
 - **Antipatrón identificado:** God Object y Spaghetti Code combinados en `GestorPedidos.procesarPedido()`.
-- **Patrón a aplicar:**
-  1. **Chain of Responsibility** para la secuencia de validaciones: existe una dependencia estricta de orden y necesidad de corte anticipado (si el stock falla, no se debe consultar la mora del cliente).
-  2. **Strategy** para las políticas de descuento por tipo de cliente: las reglas son mutuamente excluyentes y no dependen de un orden procedural.
-  3. **Repository** (`PedidoRepository`) para aislar la persistencia JDBC.
-  4. **Service dedicado** (`NotificacionPedidoService`) para la construcción y envío del correo de confirmación.
+- **Patrón aplicado:**
+  - **Chain of Responsibility** para la secuencia de validaciones: existe una dependencia estricta de orden y necesidad de corte anticipado (si el stock falla, no se debe consultar la mora del cliente).
+  - **Strategy** para las políticas de descuento por tipo de cliente: las reglas son mutuamente excluyentes y no dependen de un orden procedural.
+  - **Repository** (`PedidoRepository`) para aislar la persistencia JDBC.
+  - **Service dedicado** (`NotificacionPedidoService`) para la construcción y envío del correo de confirmación.
 - **Alternativa descartada:** Un método monolítico `validarTodo()` con una lista de `Predicate<ContextoPedido>`. Se descartó porque evalúa condiciones sin corte anticipado elegante y obliga a instanciar verificaciones innecesarias cuando un paso previo ya determinó el rechazo.
+
+### Parte 2 — Crecimiento del proyecto
+- **Antipatrón identificado:** Golden Hammer. Las tres campañas de descuento se implementaron como eslabones de la cadena de validación existente, violando el contrato de la cadena y acoplando responsabilidades de cálculo de precios dentro de la etapa de validación.
+- **Patrón a aplicar:** **Strategy**, extendiendo la interfaz `EstrategiaDescuento` con `DescuentoBlackFriday`, `DescuentoCorporativo` y `DescuentoVolumen`, coordinados por un `CalculadorDescuentoFinal`. Los tres eslabones incorrectos y el campo `descuentoCampana` se eliminan por completo del código fuente (evitando un **Lava Flow**).
+- **Alternativa descartada:** Mantener las promociones dentro de la cadena con un mecanismo de banderas booleanas. Se descarta porque perpetúa el antipatrón al usar una herramienta para fines opuestos a su naturaleza de diseño.
 
 ---
 
